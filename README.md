@@ -324,6 +324,45 @@ Tools return compact output by default to minimize context usage. For a typical 
 | `verbose: true` | Pass on any pine tool to get raw data with IDs/colors when needed |
 | `study_filter` | Target one indicator instead of scanning all |
 
+## Known Issues
+
+### `pine_set_source` silently does nothing (confirmed 2026-08-03)
+
+On the current TradingView Desktop build `pine_set_source` **reports success and does not
+change the editor**. It returns `{"success": true, "lines_set": N}` with a plausible line
+count while the editor keeps its previous content. `pine_smart_compile` then happily compiles
+whatever *was* in the editor and reports no errors, so nothing in the tool output hints that
+the injection was lost.
+
+How this bites: deploying a strategy this way produces a **saved script with the right name
+and the wrong body** — in our case the default `strategy("Моя стратегия", ...)` template
+saved under the name of a real strategy. Nothing warns you; the script simply produces
+garbage the next time someone adds it to a chart.
+
+**Detection.** After saving, call `pine_list_scripts` and compare the `title` field against
+the `strategy()`/`indicator()` title in your source. `title` comes from the compiled script,
+`name` from the save dialog — when they disagree, the body is not what you think it is.
+That mismatch is the only signal we found.
+
+**Workaround — paste by hand:**
+
+1. `pine_new` to create the script (see the editor-mode caveat below), or open the target script.
+2. Paste the source manually: Ctrl+A, Ctrl+V in the Pine editor.
+3. Ctrl+S, name the script.
+4. Verify with `pine_list_scripts` that `title` matches the `strategy()` title.
+
+Do not trust `lines_set` as confirmation of anything.
+
+### `pine_*` tools cannot see a floating Pine editor
+
+If the Pine editor is opened as the **floating dialog docked to the right**
+(`[data-name="pine-dialog"]`), every `pine_*` tool fails with
+`"Could not open Pine Editor."` — including `pine_new` — even though `tv_ui_state` reports
+`pine_editor.open: true` (with `width: 0, height: 0`, which is the tell).
+
+**Fix:** click **«Включить режим разделённого экрана»** / "Enable split screen mode" in the
+editor header. In the docked/split layout the tools find the editor normally.
+
 ## Finding TradingView on Your System
 
 Launch scripts and `tv_launch` auto-detect TradingView. If auto-detection fails:

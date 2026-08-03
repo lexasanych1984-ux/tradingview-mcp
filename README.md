@@ -326,13 +326,17 @@ Tools return compact output by default to minimize context usage. For a typical 
 
 ## Known Issues
 
-### `pine_set_source` silently does nothing (confirmed 2026-08-03)
+### `pine_set_source` silently does nothing — use `scripts/inject-pine-all.cjs` (2026-08-03)
 
 On the current TradingView Desktop build `pine_set_source` **reports success and does not
 change the editor**. It returns `{"success": true, "lines_set": N}` with a plausible line
 count while the editor keeps its previous content. `pine_smart_compile` then happily compiles
 whatever *was* in the editor and reports no errors, so nothing in the tool output hints that
 the injection was lost.
+
+**Root cause: the Pine editor keeps several Monaco instances alive** — the visible one plus
+one or two phantoms with zero size, left over from previous opens. `pine_set_source` targets
+the wrong one. This is also why `pine_new` can fail with `"Could not open Pine Editor"`.
 
 How this bites: deploying a strategy this way produces a **saved script with the right name
 and the wrong body** — in our case the default `strategy("Моя стратегия", ...)` template
@@ -342,16 +346,29 @@ garbage the next time someone adds it to a chart.
 **Detection.** After saving, call `pine_list_scripts` and compare the `title` field against
 the `strategy()`/`indicator()` title in your source. `title` comes from the compiled script,
 `name` from the save dialog — when they disagree, the body is not what you think it is.
-That mismatch is the only signal we found.
+That mismatch is the only signal we found. Do not trust `lines_set` as confirmation.
 
-**Workaround — paste by hand:**
+**Primary procedure — `scripts/inject-pine-all.cjs`** (verified working on this build,
+2026-08-03). It writes the source into **every** Monaco instance, so the phantoms cannot
+shadow the real one:
 
-1. `pine_new` to create the script (see the editor-mode caveat below), or open the target script.
-2. Paste the source manually: Ctrl+A, Ctrl+V in the Pine editor.
-3. Ctrl+S, name the script.
-4. Verify with `pine_list_scripts` that `title` matches the `strategy()` title.
+```bash
+node scripts/inject-pine-all.cjs <targetId> path/to/script.pine   # → {"ok":true,"editors_set":3,...}
+node scripts/dump-pine.cjs      <targetId> /tmp/check.pine        # verify
+```
 
-Do not trust `lines_set` as confirmation of anything.
+Then save (`pine_save`) and confirm `pine_list_scripts` shows a matching `title`.
+Verification run: injected an 869-line strategy, dumped it back, byte-identical to the
+source file; a deliberately marked probe variant landed and was then cleanly overwritten.
+
+**Fallback — paste by hand:** open the target script, Ctrl+A, Ctrl+V, Ctrl+S, then check
+`title` as above. Slower, but needs no CDP access.
+
+⚠️ **`dump-pine.cjs` picks the Monaco instance with the longest content.** With a stale
+phantom holding a *longer* script than the one you just opened, it dumps the wrong source —
+this happened here and wrote a strategy into an indicator's file. When several scripts have
+been open in one session, verify the dump's first lines before trusting it, or select the
+instance by a content marker instead of by length.
 
 ### `pine_*` tools cannot see a floating Pine editor
 
@@ -362,6 +379,15 @@ If the Pine editor is opened as the **floating dialog docked to the right**
 
 **Fix:** click **«Включить режим разделённого экрана»** / "Enable split screen mode" in the
 editor header. In the docked/split layout the tools find the editor normally.
+
+### `ui_open_panel` does not open the Pine editor (2026-08-03)
+
+`ui_open_panel {panel: "pine-editor", action: "open"}` returns
+`{"performed": "opened"}` but nothing appears — the only Monaco left in the DOM is a
+zero-height phantom.
+
+**Fix:** click the Pine button in the right widget bar instead:
+`ui_click {by: "data-name", value: "pine-dialog-button"}`.
 
 ## Finding TradingView on Your System
 
